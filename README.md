@@ -1,7 +1,7 @@
 # Catastra
 
-Parcelas oficiales de la Ciudad de Buenos Aires por API y MCP: buscás por punto, SMP o área y recibís superficie, partida y zonificación del Código Urbanístico.
-Pensado para devs y agentes de IA. **CABA hoy.**
+Parcelas oficiales de CABA + AMBA (25 partidos de la Provincia de Buenos Aires) por API y MCP: buscás por punto, ficha o área, por SMP en CABA o por CCA (nomenclatura ARBA) o partida + partido en PBA y recibís superficie y partida. Zonificación del Código Urbanístico solo en CABA; PBA no tiene zonificación.
+Pensado para devs y agentes de IA. **El resto de PBA próximamente; más provincias si hay interés.**
 
 🌐 https://catastra.ldest.dev · MCP: `https://catastra.ldest.dev/mcp` (Streamable HTTP) · Registry: `dev.ldest.catastra/catastra`
 
@@ -9,10 +9,10 @@ Pensado para devs y agentes de IA. **CABA hoy.**
 
 | Herramienta MCP | Qué hace | Endpoint REST |
 |---|---|---|
-| `parcela_por_coordenada` (lat, lon, incluir_geometria?) | Parcela en un punto de CABA | `GET /v1/parcelas/punto?lat=&lon=` |
-| `parcela_por_nomenclatura` (smp o nomenclatura, jurisdiccion=CABA) | Busca por SMP, con o sin espacios | `GET /v1/parcelas/buscar?smp=` |
-| `ficha_parcela` (id `AR-C-<smp>`) | Ficha completa de una parcela | `GET /v1/parcelas/{id}` |
-| `parcelas_en_area` (bbox, límite 1–200, cursor) | Parcelas en hasta 1 km² (lados ≤ 2 km) | `GET /v1/parcelas/area?bbox=min_lon,min_lat,max_lon,max_lat` |
+| `parcela_por_coordenada` (lat, lon, incluir_geometria=false) | Parcelas en un punto de CABA o AMBA | `GET /v1/parcelas/punto?lat=&lon=` |
+| `parcela_por_nomenclatura` (smp o nomenclatura, partida, partido, jurisdiccion="CABA" o "PBA", incluir_geometria=false) | CABA (por defecto): SMP. PBA: CCA de 42 caracteres o partida + partido (código ARBA de tres dígitos, conservando ceros) | `GET /v1/parcelas/buscar?smp=`; PBA: `?jurisdiccion=PBA&nomenclatura=<CCA>` o `?jurisdiccion=PBA&partida=<partida>&partido=<codigo>` |
+| `ficha_parcela` (id, incluir_geometria=false) | Ficha completa de CABA o AMBA; usá el id devuelto por una búsqueda | `GET /v1/parcelas/{id}` |
+| `parcelas_en_area` (min_lon, min_lat, max_lon, max_lat, limite=50 [1–200], cursor opcional) | Parcelas de CABA y AMBA en hasta 1 km² (lados ≤ 2 km); cursor por último id, mismo rectángulo al paginar | `GET /v1/parcelas/area?bbox=min_lon,min_lat,max_lon,max_lat` |
 | `cobertura_y_fuentes` | Cobertura y atribuciones (no descuenta cupo) | `GET /v1/cobertura` (público, sin clave) |
 
 ## Arranque rápido
@@ -28,7 +28,7 @@ curl 'https://catastra.ldest.dev/v1/parcelas/AR-C-055-200-005' \
 
 ## Configuración MCP
 
-**Cursor** (`.cursor/mcp.json`):
+**Cursor** (`.cursor/mcp.json`; formato tomado de `llms-full.txt` del proyecto):
 ```json
 {
   "mcpServers": {
@@ -41,13 +41,13 @@ curl 'https://catastra.ldest.dev/v1/parcelas/AR-C-055-200-005' \
 }
 ```
 
-**Claude Code** (todavía no probado con Catastra):
+**Claude Code** ⚠️ sintaxis estándar de Claude Code, no probada contra Catastra:
 ```sh
 claude mcp add --transport http catastra https://catastra.ldest.dev/mcp \
   --header "Authorization: Bearer <clave>"
 ```
 
-**Claude Desktop** (todavía no probado con Catastra). Claude Desktop conecta servidores remotos desde *Settings → Connectors*, pero ese flujo no permite header fijo; la opción con clave es vía `mcp-remote` en `claude_desktop_config.json`:
+**Claude Desktop** ⚠️ no probado. Claude Desktop conecta servidores remotos desde *Settings → Connectors*, pero ese flujo no permite header fijo; la opción con clave es vía `mcp-remote` en `claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
@@ -61,7 +61,7 @@ claude mcp add --transport http catastra https://catastra.ldest.dev/mcp \
 }
 ```
 
-**Cliente MCP genérico:** transporte Streamable HTTP, URL `https://catastra.ldest.dev/mcp`, header `Authorization: Bearer <clave>`. `initialize` y `tools/list` responden sin clave; `tools/call` la exige.
+**Cliente MCP genérico:** transporte Streamable HTTP, URL `https://catastra.ldest.dev/mcp`, header `Authorization: Bearer <clave>`. `initialize` y `tools/list` responden sin clave; `tools/call` la exige (verificado 05/11 15:48).
 
 ## Prompts de ejemplo
 
@@ -73,7 +73,13 @@ claude mcp add --transport http catastra https://catastra.ldest.dev/mcp \
 
 ## Ejemplo real
 
-Respuestas reales del servidor (`structuredContent` de MCP, noviembre de 2026). Sin geometría, porque `incluir_geometria` es false por defecto.
+**Verificado en vivo (05/11/2026 15:48, hora de Buenos Aires):**
+- `initialize` → OK: `serverInfo.name = "catastra"`, `protocolVersion 2025-06-18`, capability `tools`.
+- `tools/list` → OK: las 5 herramientas de la tabla, todas `readOnlyHint: true`.
+- `tools/call ficha_parcela {"id":"AR-C-055-200-005"}` sin clave → `{"error":{"codigo":"no_autorizado","mensaje":"Se requiere una clave válida"}}`.
+- `GET /v1/cobertura` → OK: CABA, 318.046 parcelas (317.894 con Código Urbanístico).
+
+**Salida real** de producción (`structuredContent` de MCP), capturada por Parcela el 05/11/2026 entre las 15:50 y las 15:51 (hora de Buenos Aires; horario de modificación de los archivos en `ejemplos-reales-2026-11-05/`). Las respuestas no traen geometría porque `incluir_geometria` queda en false por defecto.
 
 ```
 Usuario: Traeme la ficha de la parcela 055-200-005 en CABA.
@@ -190,14 +196,24 @@ Agente → parcela_por_coordenada {"lat": -34.551262, "lon": -58.490720}
 - **No es un certificado oficial.** Es información orientativa; no reemplaza una certificación urbanística.
 - **No reemplaza el Informe Urbanístico** ni la consulta de la normativa vigente en el municipio.
 - **Los datos tienen fecha de corte** (ver abajo) y no se actualizan en tiempo real.
-- **CABA hoy.** Otras jurisdicciones todavía no están disponibles.
-- No busca por dirección postal (todavía): usá coordenadas o SMP.
+- Ningún dato de titulares ni de valuación.
+- No busca por dirección postal (todavía): usá coordenadas, SMP en CABA, o CCA o partida + partido en PBA.
+
+## Cobertura
+
+**CABA + AMBA (25 partidos de la Provincia de Buenos Aires).** El resto de PBA próximamente; más provincias si hay interés.
+
+Partidos cubiertos (código ARBA): 003 Almirante Brown; 004 Avellaneda; 025 Lanús; 030 Esteban Echeverría; 032 Florencio Varela; 047 General San Martín; 055 La Plata; 057 Tigre; 063 Lomas de Zamora; 070 La Matanza; 072 Merlo; 074 Moreno; 086 Quilmes; 096 San Fernando; 097 San Isidro; 101 Morón; 110 Vicente López; 117 Tres de Febrero; 120 Berazategui; 130 Ezeiza; 131 San Miguel; 132 José C. Paz; 133 Malvinas Argentinas; 135 Hurlingham; 136 Ituzaingó.
+
+PBA no tiene zonificación. Solo CABA incluye Código Urbanístico cuando está en la fuente. Las cantidades de parcelas por partido se consultan en `/v1/cobertura`.
 
 ## Fuentes y fechas de corte
 
 Fuente: Gobierno de la Ciudad de Buenos Aires — BA Data, licencia CC-BY-2.5-AR.
 - Parcelas CABA — corte **2026-07-07** (se publica semestral) — https://data.buenosaires.gob.ar/dataset/parcelas
 - Código Urbanístico — corte **2024-12-31** — https://data.buenosaires.gob.ar/dataset/codigo-urbanistico
+
+Fuente: ARBA (Agencia de Recaudación de la Provincia de Buenos Aires) — parcelas PBA, licencia CC BY 2.5 AR, corte **noviembre de 2026**.
 
 ## Límites (plan gratis)
 
@@ -209,4 +225,4 @@ Fuente: Gobierno de la Ciudad de Buenos Aires — BA Data, licencia CC-BY-2.5-AR
 
 ## English
 
-Catastra serves official Buenos Aires City (CABA) parcel data via REST API and a remote MCP server (`https://catastra.ldest.dev/mcp`, Streamable HTTP). Look up parcels by point, SMP or small area and get area, tax ID (partida) and zoning. Get a free key (100 queries/month, 10/min) at https://catastra.ldest.dev/#clave and send it as `Authorization: Bearer <key>`. Informational only — not an official zoning certificate. Data cutoffs: parcels 2026-07-07, zoning code 2024-12-31. Coverage: CABA today.
+Coverage: CABA and AMBA (25 Buenos Aires Province districts). The rest of Buenos Aires Province is coming soon; more provinces if there is interest. Catastra serves official parcel data via REST API and a remote MCP server (`https://catastra.ldest.dev/mcp`, Streamable HTTP). Look up parcels by point, record ID or small area, by SMP in CABA, or by CCA (ARBA cadastral identifier) or partida + district code in PBA. Zoning is available only for CABA; PBA has no zoning. No ownership or valuation data. Get a free key (100 queries/month, 10/min) at https://catastra.ldest.dev/#clave and send it as `Authorization: Bearer <key>`. Informational only — not an official zoning certificate. Sources and cutoffs: BA Data, CABA parcels 2026-07-07 and zoning code 2024-12-31; ARBA, PBA parcels November 2026, CC BY 2.5 AR (attribution: Fuente: ARBA).
